@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Password Manager",
   "version": "0.0.0",
+  "permissions": ["storage"],
   "action": {
     "default_title": "Password Manager"
   },
