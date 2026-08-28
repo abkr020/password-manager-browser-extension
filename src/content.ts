@@ -2,10 +2,9 @@ console.log('Password Manager content script loaded')
 console.log(window.location.href)
 
 interface SavedCredential {
-  url: string
-  hostname: string
   username: string
   password: string
+  domains: string[]
   timestamp: number
 }
 
@@ -23,23 +22,133 @@ const detectedPasswordFields = new WeakSet<HTMLInputElement>()
 const detectedLoginForms = new WeakSet<HTMLFormElement>()
 let credentialSaveQueue = Promise.resolve()
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isCurrentCredential(value: unknown): value is SavedCredential {
+  return (
+    isRecord(value) &&
+    typeof value.username === 'string' &&
+    typeof value.password === 'string' &&
+    Array.isArray(value.domains) &&
+    value.domains.every((domain) => typeof domain === 'string') &&
+    new Set(value.domains).size === value.domains.length &&
+    typeof value.timestamp === 'number' &&
+    !('url' in value) &&
+    !('hostname' in value)
+  )
+}
+
+function hostnameFromUrl(value: unknown) {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  try {
+    return new URL(value).hostname
+  } catch {
+    return null
+  }
+}
+
+function domainsFromStoredCredential(credential: Record<string, unknown>) {
+  const domains = Array.isArray(credential.domains)
+    ? credential.domains.filter(
+        (domain): domain is string => typeof domain === 'string' && domain !== '',
+      )
+    : []
+  const legacyDomain =
+    (typeof credential.hostname === 'string' && credential.hostname) ||
+    hostnameFromUrl(credential.url)
+
+  if (legacyDomain && !domains.includes(legacyDomain)) {
+    domains.push(legacyDomain)
+  }
+
+  return [...new Set(domains)]
+}
+
+function migrateSavedCredentials(storedValue: unknown) {
+  if (!Array.isArray(storedValue)) {
+    return { credentials: [] as SavedCredential[], migrated: storedValue !== undefined }
+  }
+
+  const credentials: SavedCredential[] = []
+  let migrated = false
+
+  for (const storedCredential of storedValue) {
+    if (!isRecord(storedCredential) || typeof storedCredential.password !== 'string') {
+      migrated = true
+      continue
+    }
+
+    if (!isCurrentCredential(storedCredential)) {
+      migrated = true
+    }
+
+    const credential: SavedCredential = {
+      username:
+        typeof storedCredential.username === 'string'
+          ? storedCredential.username
+          : '',
+      password: storedCredential.password,
+      domains: domainsFromStoredCredential(storedCredential),
+      timestamp:
+        typeof storedCredential.timestamp === 'number'
+          ? storedCredential.timestamp
+          : Date.now(),
+    }
+    const existingCredential = credentials.find(
+      (existing) =>
+        existing.username === credential.username &&
+        existing.password === credential.password,
+    )
+
+    if (existingCredential) {
+      migrated = true
+      for (const domain of credential.domains) {
+        if (!existingCredential.domains.includes(domain)) {
+          existingCredential.domains.push(domain)
+        }
+      }
+    } else {
+      credentials.push(credential)
+    }
+  }
+
+  return { credentials, migrated }
+}
+
 async function saveCredential(username: string, password: string) {
   const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
-  const savedPasswords = Array.isArray(storedData[savedPasswordsStorageKey])
-    ? (storedData[savedPasswordsStorageKey] as SavedCredential[])
-    : []
+  const { credentials, migrated } = migrateSavedCredentials(
+    storedData[savedPasswordsStorageKey],
+  )
+  const matchingCredential = credentials.find(
+    (credential) =>
+      credential.username === username && credential.password === password,
+  )
 
-  savedPasswords.push({
-    url: window.location.href,
-    hostname: window.location.hostname,
+  if (matchingCredential) {
+    if (!matchingCredential.domains.includes(window.location.hostname)) {
+      matchingCredential.domains.push(window.location.hostname)
+      await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
+    } else if (migrated) {
+      await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
+    }
+
+    return
+  }
+
+  credentials.push({
     username,
     password,
+    domains: [window.location.hostname],
     timestamp: Date.now(),
   })
 
-  await chrome.storage.local.set({
-    [savedPasswordsStorageKey]: savedPasswords,
-  })
+  await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
 }
 
 function queueCredentialSave(username: string, password: string) {
