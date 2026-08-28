@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import BulkCredentialForm, { type BulkCredentialRow } from './BulkCredentialForm'
 import CredentialForm from './CredentialForm'
 import type { CredentialDraft, SavedCredential } from './types'
 import './App.css'
@@ -39,6 +40,7 @@ function App() {
   const [credentials, setCredentials] = useState<SavedCredential[]>([])
   const [editingCredential, setEditingCredential] = useState<SavedCredential | null>(null)
   const [isAdding, setIsAdding] = useState(false)
+  const [isBulkAdding, setIsBulkAdding] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [revealedPasswords, setRevealedPasswords] = useState<Set<number>>(new Set())
 
@@ -47,18 +49,13 @@ function App() {
     setRevealedPasswords(new Set())
   }
 
-  async function loadCredentials() {
-    try {
-      const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
-      updateCredentials(credentialsFromStorage(storedData[savedPasswordsStorageKey]))
-      setLoadError('')
-    } catch {
-      setLoadError('Unable to load saved credentials.')
-    }
-  }
-
   useEffect(() => {
-    void loadCredentials()
+    void chrome.storage.local.get(savedPasswordsStorageKey)
+      .then((storedData) => {
+        updateCredentials(credentialsFromStorage(storedData[savedPasswordsStorageKey]))
+        setLoadError('')
+      })
+      .catch(() => setLoadError('Unable to load saved credentials.'))
 
     function handleStorageChange(
       changes: Record<string, ChromeStorageChange>,
@@ -121,6 +118,31 @@ function App() {
     }
   }
 
+  async function saveBulkCredentials(rows: BulkCredentialRow[]) {
+    try {
+      const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
+      const currentCredentials = credentialsFromStorage(storedData[savedPasswordsStorageKey])
+      const seen = new Set(currentCredentials.map((credential) => `${credential.username}\u0000${credential.password}`))
+      const timestamp = Date.now()
+      const importedCredentials: SavedCredential[] = []
+
+      rows.forEach((row) => {
+        const key = `${row.username}\u0000${row.password}`
+        if (seen.has(key)) return
+        seen.add(key)
+        importedCredentials.push({ username: row.username, password: row.password, domains: [], timestamp: timestamp + importedCredentials.length })
+      })
+
+      const nextCredentials = [...currentCredentials, ...importedCredentials]
+      if (importedCredentials.length > 0) await chrome.storage.local.set({ [savedPasswordsStorageKey]: nextCredentials })
+      updateCredentials(nextCredentials)
+      setIsBulkAdding(false)
+      setLoadError('')
+    } catch {
+      setLoadError('Unable to save imported credentials.')
+    }
+  }
+
   async function deleteCredential(credentialToDelete: SavedCredential) {
     if (!window.confirm('Delete this saved credential?')) {
       return
@@ -148,6 +170,7 @@ function App() {
   function closeForm() {
     setEditingCredential(null)
     setIsAdding(false)
+    setIsBulkAdding(false)
   }
 
   function togglePassword(index: number) {
@@ -174,10 +197,11 @@ function App() {
           <p className="eyebrow">Password Manager</p>
           <h1>Saved credentials</h1>
         </div>
-        {!isAdding && !editingCredential && (
-          <button onClick={() => setIsAdding(true)} type="button">
-            Add credential
-          </button>
+        {!isAdding && !isBulkAdding && !editingCredential && (
+          <div className="header-actions">
+            <button className="secondary-button" onClick={() => setIsBulkAdding(true)} type="button">Bulk add</button>
+            <button onClick={() => setIsAdding(true)} type="button">Add credential</button>
+          </div>
         )}
       </header>
 
@@ -194,11 +218,18 @@ function App() {
         </section>
       )}
 
-      {!isAdding && !editingCredential && credentials.length === 0 && !loadError && (
+      {isBulkAdding && (
+        <section className="form-panel">
+          <h2>Bulk add credentials</h2>
+          <BulkCredentialForm onCancel={closeForm} onSave={(rows) => void saveBulkCredentials(rows)} />
+        </section>
+      )}
+
+      {!isAdding && !isBulkAdding && !editingCredential && credentials.length === 0 && !loadError && (
         <p className="empty-state">No saved credentials yet.</p>
       )}
 
-      {!isAdding && !editingCredential && credentials.length > 0 && (
+      {!isAdding && !isBulkAdding && !editingCredential && credentials.length > 0 && (
         <section className="credential-list" aria-label="Saved credentials">
           {credentials.map((credential, index) => {
             const isPasswordVisible = revealedPasswords.has(index)
