@@ -13,6 +13,18 @@ const detectedPasswordFields = new WeakSet<HTMLInputElement>()
 const detectedLoginForms = new WeakSet<HTMLFormElement>()
 let credentialSaveQueue = Promise.resolve()
 
+const usernameFieldSelectors = [
+  'input[autocomplete="username"]',
+  'input[type="email"]',
+  'input[name="email"]',
+  'input[name="username"]',
+  'input[name="user"]',
+  'input[id*="email" i]',
+  'input[id*="username" i]',
+  'input[name*="email" i]',
+  'input[name*="username" i]',
+]
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -151,15 +163,7 @@ function queueCredentialSave(username: string, password: string) {
 }
 
 function findUsernameField(form: HTMLFormElement) {
-  const usernameSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[name="username"]',
-    'input[name="user"]',
-    'input[autocomplete="username"]',
-  ]
-
-  for (const selector of usernameSelectors) {
+  for (const selector of usernameFieldSelectors) {
     const usernameField = form.querySelector<HTMLInputElement>(selector)
     if (usernameField) {
       return usernameField
@@ -174,6 +178,82 @@ function findPasswordField(form: HTMLFormElement) {
     (element): element is HTMLInputElement =>
       element instanceof HTMLInputElement && element.type === 'password',
   )
+}
+
+function isFillableInput(input: HTMLInputElement) {
+  return input.isConnected && !input.disabled && input.type !== 'hidden'
+}
+
+function findAutofillUsernameField() {
+  for (const selector of usernameFieldSelectors) {
+    const usernameField = Array.from(
+      document.querySelectorAll<HTMLInputElement>(selector),
+    ).find(isFillableInput)
+
+    if (usernameField) {
+      return usernameField
+    }
+  }
+
+  return null
+}
+
+function isPasswordConfirmationField(input: HTMLInputElement) {
+  const description = `${input.name} ${input.id} ${input.autocomplete}`.toLowerCase()
+  return (
+    input.autocomplete === 'new-password' ||
+    /confirm|confirmation|repeat|new-password/.test(description)
+  )
+}
+
+function findAutofillPasswordField(usernameField: HTMLInputElement) {
+  const associatedForm = usernameField.form ?? usernameField.closest('form')
+  const passwordFields = Array.from(
+    (associatedForm ?? document).querySelectorAll<HTMLInputElement>(
+      'input[type="password"]',
+    ),
+  ).filter(isFillableInput)
+
+  return (
+    passwordFields.find(
+      (passwordField) => passwordField.autocomplete === 'current-password',
+    ) ?? passwordFields.find((passwordField) => !isPasswordConfirmationField(passwordField)) ?? null
+  )
+}
+
+function setNativeInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'value',
+  )?.set
+
+  if (!valueSetter) {
+    return false
+  }
+
+  valueSetter.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  return true
+}
+
+function autofillCredential(credential: SavedCredential) {
+  const usernameField = findAutofillUsernameField()
+  if (!usernameField) {
+    return 'Username field not found'
+  }
+
+  const passwordField = findAutofillPasswordField(usernameField)
+  if (!passwordField) {
+    return 'Password field not found'
+  }
+
+  const usernameFilled = setNativeInputValue(usernameField, credential.username)
+  const passwordFilled = setNativeInputValue(passwordField, credential.password)
+
+  return usernameFilled && passwordFilled
+    ? 'Credentials filled'
+    : 'Unable to fill credentials'
 }
 
 function detectLoginForm(form: HTMLFormElement) {
@@ -237,6 +317,7 @@ const historyChangeEvent = 'password-manager-history-change'
 let dismissedLoginUrl: string | null = null
 let selectedPanelCredential: SavedCredential | null = null
 let revealedPanelCredential: SavedCredential | null = null
+let panelStatus = ''
 
 function isLoginPage() {
   return window.location.href.toLowerCase().includes('login')
@@ -255,7 +336,7 @@ function createPanelStyles() {
   const styles = document.createElement('style')
   styles.textContent = `
     :host { background: #fff; border: 1px solid #d8d1e7; border-radius: 10px; bottom: 20px; box-shadow: 0 12px 30px rgba(25, 15, 50, .22); box-sizing: border-box; color: #29233a; display: block; font: 14px/1.4 Arial, sans-serif; left: 20px; max-height: min(520px, calc(100vh - 40px)); overflow: auto; padding: 14px; position: fixed; width: 330px; z-index: 2147483647; }
-    * { box-sizing: border-box; } .pm-header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; } .pm-title { color: #251c39; font-size: 16px; font-weight: 700; margin: 0; } button { background: #6542b8; border: 0; border-radius: 5px; color: #fff; cursor: pointer; font: inherit; padding: 5px 8px; } button:hover { background: #53349d; } .pm-close, .pm-show { background: transparent; color: #5637a3; padding: 2px 5px; } .pm-close { font-size: 18px; line-height: 1; } .pm-list { display: grid; gap: 8px; } .pm-credential { background: #fbfaff; border: 1px solid #e2dced; border-radius: 7px; cursor: pointer; padding: 10px; } .pm-credential.pm-selected { border-color: #6542b8; box-shadow: 0 0 0 2px #e4dcf7; } .pm-username { color: #251c39; font-weight: 700; overflow-wrap: anywhere; } .pm-password { align-items: center; color: #5f5970; display: flex; gap: 6px; margin-top: 6px; overflow-wrap: anywhere; } .pm-domains { color: #5f5970; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; } .pm-domains span { background: #ede8f8; border-radius: 999px; display: inline-block; margin: 0 4px 4px 0; padding: 2px 6px; } .pm-empty { color: #5f5970; margin: 0; }
+    * { box-sizing: border-box; } .pm-header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; } .pm-title { color: #251c39; font-size: 16px; font-weight: 700; margin: 0; } button { background: #6542b8; border: 0; border-radius: 5px; color: #fff; cursor: pointer; font: inherit; padding: 5px 8px; } button:hover { background: #53349d; } .pm-close, .pm-show { background: transparent; color: #5637a3; padding: 2px 5px; } .pm-close { font-size: 18px; line-height: 1; } .pm-list { display: grid; gap: 8px; } .pm-status { color: #4f3a83; font-size: 12px; margin: 0 0 10px; } .pm-credential { background: #fbfaff; border: 1px solid #e2dced; border-radius: 7px; cursor: pointer; padding: 10px; } .pm-credential.pm-selected { border-color: #6542b8; box-shadow: 0 0 0 2px #e4dcf7; } .pm-username { color: #251c39; font-weight: 700; overflow-wrap: anywhere; } .pm-password { align-items: center; color: #5f5970; display: flex; gap: 6px; margin-top: 6px; overflow-wrap: anywhere; } .pm-domains { color: #5f5970; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; } .pm-domains span { background: #ede8f8; border-radius: 999px; display: inline-block; margin: 0 4px 4px 0; padding: 2px 6px; } .pm-empty { color: #5f5970; margin: 0; }
   `
   return styles
 }
@@ -264,6 +345,7 @@ function removeLoginPanel() {
   document.getElementById(loginPanelId)?.remove()
   selectedPanelCredential = null
   revealedPanelCredential = null
+  panelStatus = ''
 }
 
 function createLoginPanel() {
@@ -291,16 +373,21 @@ function createLoginPanel() {
   })
   header.append(title, closeButton)
 
+  const status = document.createElement('p')
+  status.className = 'pm-status'
+  status.setAttribute('aria-live', 'polite')
+
   const list = document.createElement('div')
   list.className = 'pm-list'
-  shadowRoot.append(createPanelStyles(), header, list)
+  shadowRoot.append(createPanelStyles(), header, status, list)
   document.body.append(panel)
 }
 
 async function renderLoginPanel() {
   const panel = document.getElementById(loginPanelId)
   const list = panel?.shadowRoot?.querySelector('.pm-list')
-  if (!panel || !list || !isLoginPage()) {
+  const status = panel?.shadowRoot?.querySelector('.pm-status')
+  if (!panel || !list || !status || !isLoginPage()) {
     return
   }
 
@@ -308,6 +395,7 @@ async function renderLoginPanel() {
   const { credentials } = migrateSavedCredentials(
     storedData[savedPasswordsStorageKey],
   )
+  status.textContent = panelStatus
   list.replaceChildren()
 
   if (credentials.length === 0) {
@@ -326,6 +414,7 @@ async function renderLoginPanel() {
     }
     card.addEventListener('click', () => {
       selectedPanelCredential = credential
+      panelStatus = autofillCredential(credential)
       void renderLoginPanel()
     })
 
