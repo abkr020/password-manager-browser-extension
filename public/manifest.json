@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "permissions": ["storage"],
   "action": {
-    "default_title": "Password Manager"
+    "default_title": "Password Manager",
+    "default_popup": "index.html"
   },
   "content_scripts": [
     {

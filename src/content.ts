@@ -8,15 +8,6 @@ interface SavedCredential {
   timestamp: number
 }
 
-declare const chrome: {
-  storage: {
-    local: {
-      get(key: string): Promise<Record<string, unknown>>
-      set(items: Record<string, unknown>): Promise<void>
-    }
-  }
-}
-
 const savedPasswordsStorageKey = 'saved_passwords'
 const detectedPasswordFields = new WeakSet<HTMLInputElement>()
 const detectedLoginForms = new WeakSet<HTMLFormElement>()
