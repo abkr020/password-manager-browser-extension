@@ -10,10 +10,13 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         content: resolve(import.meta.dirname, 'src/content.ts'),
+        navigation: resolve(import.meta.dirname, 'src/navigation.ts'),
       },
       output: {
         entryFileNames: (chunk) =>
-          chunk.name === 'content' ? 'content.js' : 'assets/[name]-[hash].js',
+          chunk.name === 'content' || chunk.name === 'navigation'
+            ? `${chunk.name}.js`
+            : 'assets/[name]-[hash].js',
       },
     },
   },

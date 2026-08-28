@@ -232,8 +232,8 @@ const observer = new MutationObserver((mutations) => {
 
 observer.observe(document.documentElement, { childList: true, subtree: true })
 
-const loginPanelId = 'password-manager-login-panel'
-const loginPanelStylesId = 'password-manager-login-panel-styles'
+const loginPanelId = 'password-manager-panel'
+const historyChangeEvent = 'password-manager-history-change'
 let dismissedLoginUrl: string | null = null
 let selectedPanelCredential: SavedCredential | null = null
 let revealedPanelCredential: SavedCredential | null = null
@@ -251,32 +251,13 @@ function areSameCredentials(left: SavedCredential | null, right: SavedCredential
   )
 }
 
-function addPanelStyles() {
-  if (document.getElementById(loginPanelStylesId)) {
-    return
-  }
-
+function createPanelStyles() {
   const styles = document.createElement('style')
-  styles.id = loginPanelStylesId
   styles.textContent = `
-    #${loginPanelId} { background: #fff; border: 1px solid #d8d1e7; border-radius: 10px; box-shadow: 0 12px 30px rgba(25, 15, 50, .22); box-sizing: border-box; color: #29233a; font: 14px/1.4 Arial, sans-serif; max-height: min(520px, calc(100vh - 32px)); overflow: auto; padding: 14px; position: fixed; right: 16px; top: 16px; width: 330px; z-index: 2147483647; }
-    #${loginPanelId} * { box-sizing: border-box; }
-    #${loginPanelId} .pm-header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
-    #${loginPanelId} .pm-title { color: #251c39; font-size: 16px; font-weight: 700; margin: 0; }
-    #${loginPanelId} button { background: #6542b8; border: 0; border-radius: 5px; color: #fff; cursor: pointer; font: inherit; padding: 5px 8px; }
-    #${loginPanelId} button:hover { background: #53349d; }
-    #${loginPanelId} .pm-close, #${loginPanelId} .pm-show { background: transparent; color: #5637a3; padding: 2px 5px; }
-    #${loginPanelId} .pm-close { font-size: 18px; line-height: 1; }
-    #${loginPanelId} .pm-list { display: grid; gap: 8px; }
-    #${loginPanelId} .pm-credential { background: #fbfaff; border: 1px solid #e2dced; border-radius: 7px; cursor: pointer; padding: 10px; }
-    #${loginPanelId} .pm-credential.pm-selected { border-color: #6542b8; box-shadow: 0 0 0 2px #e4dcf7; }
-    #${loginPanelId} .pm-username { color: #251c39; font-weight: 700; overflow-wrap: anywhere; }
-    #${loginPanelId} .pm-password { align-items: center; color: #5f5970; display: flex; gap: 6px; margin-top: 6px; overflow-wrap: anywhere; }
-    #${loginPanelId} .pm-domains { color: #5f5970; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
-    #${loginPanelId} .pm-domains span { background: #ede8f8; border-radius: 999px; display: inline-block; margin: 0 4px 4px 0; padding: 2px 6px; }
-    #${loginPanelId} .pm-empty { color: #5f5970; margin: 0; }
+    :host { background: #fff; border: 1px solid #d8d1e7; border-radius: 10px; bottom: 20px; box-shadow: 0 12px 30px rgba(25, 15, 50, .22); box-sizing: border-box; color: #29233a; display: block; font: 14px/1.4 Arial, sans-serif; left: 20px; max-height: min(520px, calc(100vh - 40px)); overflow: auto; padding: 14px; position: fixed; width: 330px; z-index: 2147483647; }
+    * { box-sizing: border-box; } .pm-header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; } .pm-title { color: #251c39; font-size: 16px; font-weight: 700; margin: 0; } button { background: #6542b8; border: 0; border-radius: 5px; color: #fff; cursor: pointer; font: inherit; padding: 5px 8px; } button:hover { background: #53349d; } .pm-close, .pm-show { background: transparent; color: #5637a3; padding: 2px 5px; } .pm-close { font-size: 18px; line-height: 1; } .pm-list { display: grid; gap: 8px; } .pm-credential { background: #fbfaff; border: 1px solid #e2dced; border-radius: 7px; cursor: pointer; padding: 10px; } .pm-credential.pm-selected { border-color: #6542b8; box-shadow: 0 0 0 2px #e4dcf7; } .pm-username { color: #251c39; font-weight: 700; overflow-wrap: anywhere; } .pm-password { align-items: center; color: #5f5970; display: flex; gap: 6px; margin-top: 6px; overflow-wrap: anywhere; } .pm-domains { color: #5f5970; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; } .pm-domains span { background: #ede8f8; border-radius: 999px; display: inline-block; margin: 0 4px 4px 0; padding: 2px 6px; } .pm-empty { color: #5f5970; margin: 0; }
   `
-  document.head.append(styles)
+  return styles
 }
 
 function removeLoginPanel() {
@@ -290,10 +271,10 @@ function createLoginPanel() {
     return
   }
 
-  addPanelStyles()
-  const panel = document.createElement('aside')
+  const panel = document.createElement('div')
   panel.id = loginPanelId
   panel.setAttribute('aria-label', 'Password Manager saved credentials')
+  const shadowRoot = panel.attachShadow({ mode: 'open' })
 
   const header = document.createElement('div')
   header.className = 'pm-header'
@@ -312,13 +293,13 @@ function createLoginPanel() {
 
   const list = document.createElement('div')
   list.className = 'pm-list'
-  panel.append(header, list)
+  shadowRoot.append(createPanelStyles(), header, list)
   document.body.append(panel)
 }
 
 async function renderLoginPanel() {
   const panel = document.getElementById(loginPanelId)
-  const list = panel?.querySelector('.pm-list')
+  const list = panel?.shadowRoot?.querySelector('.pm-list')
   if (!panel || !list || !isLoginPage()) {
     return
   }
@@ -386,7 +367,7 @@ async function renderLoginPanel() {
   }
 }
 
-function updateLoginPanelForCurrentUrl() {
+function updateLoginPanel() {
   const currentUrl = window.location.href
 
   if (!isLoginPage()) {
@@ -416,20 +397,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
 })
 
-const originalPushState = history.pushState
-history.pushState = (...args: Parameters<History['pushState']>) => {
-  const result = originalPushState.apply(history, args)
-  queueMicrotask(updateLoginPanelForCurrentUrl)
-  return result
-}
-
-const originalReplaceState = history.replaceState
-history.replaceState = (...args: Parameters<History['replaceState']>) => {
-  const result = originalReplaceState.apply(history, args)
-  queueMicrotask(updateLoginPanelForCurrentUrl)
-  return result
-}
-
-window.addEventListener('popstate', updateLoginPanelForCurrentUrl)
-window.addEventListener('hashchange', updateLoginPanelForCurrentUrl)
-updateLoginPanelForCurrentUrl()
+window.addEventListener(historyChangeEvent, updateLoginPanel)
+window.addEventListener('popstate', updateLoginPanel)
+window.addEventListener('hashchange', updateLoginPanel)
+updateLoginPanel()
