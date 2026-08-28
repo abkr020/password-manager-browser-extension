@@ -49,11 +49,6 @@ function CredentialForm({
       return
     }
 
-    if (domains.length === 0) {
-      setError('Add at least one domain.')
-      return
-    }
-
     onSave({ username: username.trim(), password, domains })
   }
 

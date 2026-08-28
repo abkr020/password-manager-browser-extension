@@ -231,3 +231,205 @@ const observer = new MutationObserver((mutations) => {
 })
 
 observer.observe(document.documentElement, { childList: true, subtree: true })
+
+const loginPanelId = 'password-manager-login-panel'
+const loginPanelStylesId = 'password-manager-login-panel-styles'
+let dismissedLoginUrl: string | null = null
+let selectedPanelCredential: SavedCredential | null = null
+let revealedPanelCredential: SavedCredential | null = null
+
+function isLoginPage() {
+  return window.location.href.toLowerCase().includes('login')
+}
+
+function areSameCredentials(left: SavedCredential | null, right: SavedCredential) {
+  return (
+    left !== null &&
+    left.username === right.username &&
+    left.password === right.password &&
+    left.timestamp === right.timestamp
+  )
+}
+
+function addPanelStyles() {
+  if (document.getElementById(loginPanelStylesId)) {
+    return
+  }
+
+  const styles = document.createElement('style')
+  styles.id = loginPanelStylesId
+  styles.textContent = `
+    #${loginPanelId} { background: #fff; border: 1px solid #d8d1e7; border-radius: 10px; box-shadow: 0 12px 30px rgba(25, 15, 50, .22); box-sizing: border-box; color: #29233a; font: 14px/1.4 Arial, sans-serif; max-height: min(520px, calc(100vh - 32px)); overflow: auto; padding: 14px; position: fixed; right: 16px; top: 16px; width: 330px; z-index: 2147483647; }
+    #${loginPanelId} * { box-sizing: border-box; }
+    #${loginPanelId} .pm-header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
+    #${loginPanelId} .pm-title { color: #251c39; font-size: 16px; font-weight: 700; margin: 0; }
+    #${loginPanelId} button { background: #6542b8; border: 0; border-radius: 5px; color: #fff; cursor: pointer; font: inherit; padding: 5px 8px; }
+    #${loginPanelId} button:hover { background: #53349d; }
+    #${loginPanelId} .pm-close, #${loginPanelId} .pm-show { background: transparent; color: #5637a3; padding: 2px 5px; }
+    #${loginPanelId} .pm-close { font-size: 18px; line-height: 1; }
+    #${loginPanelId} .pm-list { display: grid; gap: 8px; }
+    #${loginPanelId} .pm-credential { background: #fbfaff; border: 1px solid #e2dced; border-radius: 7px; cursor: pointer; padding: 10px; }
+    #${loginPanelId} .pm-credential.pm-selected { border-color: #6542b8; box-shadow: 0 0 0 2px #e4dcf7; }
+    #${loginPanelId} .pm-username { color: #251c39; font-weight: 700; overflow-wrap: anywhere; }
+    #${loginPanelId} .pm-password { align-items: center; color: #5f5970; display: flex; gap: 6px; margin-top: 6px; overflow-wrap: anywhere; }
+    #${loginPanelId} .pm-domains { color: #5f5970; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+    #${loginPanelId} .pm-domains span { background: #ede8f8; border-radius: 999px; display: inline-block; margin: 0 4px 4px 0; padding: 2px 6px; }
+    #${loginPanelId} .pm-empty { color: #5f5970; margin: 0; }
+  `
+  document.head.append(styles)
+}
+
+function removeLoginPanel() {
+  document.getElementById(loginPanelId)?.remove()
+  selectedPanelCredential = null
+  revealedPanelCredential = null
+}
+
+function createLoginPanel() {
+  if (document.getElementById(loginPanelId) || !document.body) {
+    return
+  }
+
+  addPanelStyles()
+  const panel = document.createElement('aside')
+  panel.id = loginPanelId
+  panel.setAttribute('aria-label', 'Password Manager saved credentials')
+
+  const header = document.createElement('div')
+  header.className = 'pm-header'
+  const title = document.createElement('h2')
+  title.className = 'pm-title'
+  title.textContent = 'Password Manager'
+  const closeButton = document.createElement('button')
+  closeButton.className = 'pm-close'
+  closeButton.setAttribute('aria-label', 'Close Password Manager')
+  closeButton.textContent = '×'
+  closeButton.addEventListener('click', () => {
+    dismissedLoginUrl = window.location.href
+    removeLoginPanel()
+  })
+  header.append(title, closeButton)
+
+  const list = document.createElement('div')
+  list.className = 'pm-list'
+  panel.append(header, list)
+  document.body.append(panel)
+}
+
+async function renderLoginPanel() {
+  const panel = document.getElementById(loginPanelId)
+  const list = panel?.querySelector('.pm-list')
+  if (!panel || !list || !isLoginPage()) {
+    return
+  }
+
+  const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
+  const { credentials } = migrateSavedCredentials(
+    storedData[savedPasswordsStorageKey],
+  )
+  list.replaceChildren()
+
+  if (credentials.length === 0) {
+    const emptyState = document.createElement('p')
+    emptyState.className = 'pm-empty'
+    emptyState.textContent = 'No saved credentials yet.'
+    list.append(emptyState)
+    return
+  }
+
+  for (const credential of credentials) {
+    const card = document.createElement('article')
+    card.className = 'pm-credential'
+    if (areSameCredentials(selectedPanelCredential, credential)) {
+      card.classList.add('pm-selected')
+    }
+    card.addEventListener('click', () => {
+      selectedPanelCredential = credential
+      void renderLoginPanel()
+    })
+
+    const username = document.createElement('div')
+    username.className = 'pm-username'
+    username.textContent = credential.username
+
+    const passwordRow = document.createElement('div')
+    passwordRow.className = 'pm-password'
+    const passwordLabel = document.createElement('span')
+    passwordLabel.textContent = areSameCredentials(revealedPanelCredential, credential)
+      ? credential.password
+      : 'Password: ••••••••'
+    const showButton = document.createElement('button')
+    showButton.className = 'pm-show'
+    const isRevealed = areSameCredentials(revealedPanelCredential, credential)
+    showButton.textContent = isRevealed ? 'Hide' : 'Show'
+    showButton.addEventListener('click', (event) => {
+      event.stopPropagation()
+      revealedPanelCredential = isRevealed ? null : credential
+      void renderLoginPanel()
+    })
+    passwordRow.append(passwordLabel, showButton)
+
+    const domains = document.createElement('div')
+    domains.className = 'pm-domains'
+    if (credential.domains.length === 0) {
+      domains.textContent = 'No associated domains'
+    } else {
+      for (const domain of credential.domains) {
+        const domainLabel = document.createElement('span')
+        domainLabel.textContent = domain
+        domains.append(domainLabel)
+      }
+    }
+
+    card.append(username, passwordRow, domains)
+    list.append(card)
+  }
+}
+
+function updateLoginPanelForCurrentUrl() {
+  const currentUrl = window.location.href
+
+  if (!isLoginPage()) {
+    removeLoginPanel()
+    return
+  }
+
+  if (dismissedLoginUrl && dismissedLoginUrl !== currentUrl) {
+    dismissedLoginUrl = null
+  }
+
+  if (dismissedLoginUrl === currentUrl) {
+    return
+  }
+
+  createLoginPanel()
+  void renderLoginPanel()
+}
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (
+    areaName === 'local' &&
+    changes[savedPasswordsStorageKey] &&
+    document.getElementById(loginPanelId)
+  ) {
+    void renderLoginPanel()
+  }
+})
+
+const originalPushState = history.pushState
+history.pushState = (...args: Parameters<History['pushState']>) => {
+  const result = originalPushState.apply(history, args)
+  queueMicrotask(updateLoginPanelForCurrentUrl)
+  return result
+}
+
+const originalReplaceState = history.replaceState
+history.replaceState = (...args: Parameters<History['replaceState']>) => {
+  const result = originalReplaceState.apply(history, args)
+  queueMicrotask(updateLoginPanelForCurrentUrl)
+  return result
+}
+
+window.addEventListener('popstate', updateLoginPanelForCurrentUrl)
+window.addEventListener('hashchange', updateLoginPanelForCurrentUrl)
+updateLoginPanelForCurrentUrl()
