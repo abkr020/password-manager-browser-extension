@@ -11,6 +11,7 @@ interface ChromeStorageArea {
 declare const chrome: {
   storage: {
     local: ChromeStorageArea
+    sync: ChromeStorageArea
     onChanged: {
       addListener(
         callback: (changes: Record<string, ChromeStorageChange>, areaName: string) => void,

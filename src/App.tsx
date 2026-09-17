@@ -50,9 +50,20 @@ function App() {
   }
 
   useEffect(() => {
-    void chrome.storage.local.get(savedPasswordsStorageKey)
-      .then((storedData) => {
-        updateCredentials(credentialsFromStorage(storedData[savedPasswordsStorageKey]))
+    void chrome.storage.sync.get(savedPasswordsStorageKey)
+      .then(async (storedData) => {
+        if (storedData[savedPasswordsStorageKey] !== undefined) {
+          updateCredentials(credentialsFromStorage(storedData[savedPasswordsStorageKey]))
+          setLoadError('')
+          return
+        }
+
+        const localData = await chrome.storage.local.get(savedPasswordsStorageKey)
+        const localCredentials = credentialsFromStorage(localData[savedPasswordsStorageKey])
+        if (localData[savedPasswordsStorageKey] !== undefined) {
+          await chrome.storage.sync.set({ [savedPasswordsStorageKey]: localCredentials })
+        }
+        updateCredentials(localCredentials)
         setLoadError('')
       })
       .catch(() => setLoadError('Unable to load saved credentials.'))
@@ -61,7 +72,7 @@ function App() {
       changes: Record<string, ChromeStorageChange>,
       areaName: string,
     ) {
-      if (areaName !== 'local' || !changes[savedPasswordsStorageKey]) {
+      if (areaName !== 'sync' || !changes[savedPasswordsStorageKey]) {
         return
       }
 
@@ -76,7 +87,7 @@ function App() {
 
   async function saveCredential(draft: CredentialDraft) {
     try {
-      const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
+      const storedData = await chrome.storage.sync.get(savedPasswordsStorageKey)
       const currentCredentials = credentialsFromStorage(
         storedData[savedPasswordsStorageKey],
       )
@@ -106,7 +117,7 @@ function App() {
         })
       }
 
-      await chrome.storage.local.set({
+      await chrome.storage.sync.set({
         [savedPasswordsStorageKey]: remainingCredentials,
       })
       updateCredentials(remainingCredentials)
@@ -120,7 +131,7 @@ function App() {
 
   async function saveBulkCredentials(rows: BulkCredentialRow[]) {
     try {
-      const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
+      const storedData = await chrome.storage.sync.get(savedPasswordsStorageKey)
       const currentCredentials = credentialsFromStorage(storedData[savedPasswordsStorageKey])
       const seen = new Set(currentCredentials.map((credential) => `${credential.username}\u0000${credential.password}`))
       const timestamp = Date.now()
@@ -134,7 +145,7 @@ function App() {
       })
 
       const nextCredentials = [...currentCredentials, ...importedCredentials]
-      if (importedCredentials.length > 0) await chrome.storage.local.set({ [savedPasswordsStorageKey]: nextCredentials })
+      if (importedCredentials.length > 0) await chrome.storage.sync.set({ [savedPasswordsStorageKey]: nextCredentials })
       updateCredentials(nextCredentials)
       setIsBulkAdding(false)
       setLoadError('')
@@ -149,7 +160,7 @@ function App() {
     }
 
     try {
-      const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
+      const storedData = await chrome.storage.sync.get(savedPasswordsStorageKey)
       const currentCredentials = credentialsFromStorage(
         storedData[savedPasswordsStorageKey],
       )
@@ -157,7 +168,7 @@ function App() {
         (credential) => !sameCredential(credential, credentialToDelete),
       )
 
-      await chrome.storage.local.set({
+      await chrome.storage.sync.set({
         [savedPasswordsStorageKey]: nextCredentials,
       })
       updateCredentials(nextCredentials)

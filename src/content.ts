@@ -123,11 +123,23 @@ function migrateSavedCredentials(storedValue: unknown) {
   return { credentials, migrated }
 }
 
+async function getStoredCredentials() {
+  const syncData = await chrome.storage.sync.get(savedPasswordsStorageKey)
+  if (syncData[savedPasswordsStorageKey] !== undefined) {
+    return migrateSavedCredentials(syncData[savedPasswordsStorageKey])
+  }
+
+  const localData = await chrome.storage.local.get(savedPasswordsStorageKey)
+  const migrated = migrateSavedCredentials(localData[savedPasswordsStorageKey])
+  if (localData[savedPasswordsStorageKey] !== undefined) {
+    await chrome.storage.sync.set({ [savedPasswordsStorageKey]: migrated.credentials })
+  }
+
+  return migrated
+}
+
 async function saveCredential(username: string, password: string) {
-  const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
-  const { credentials, migrated } = migrateSavedCredentials(
-    storedData[savedPasswordsStorageKey],
-  )
+  const { credentials, migrated } = await getStoredCredentials()
   const matchingCredential = credentials.find(
     (credential) =>
       credential.username === username && credential.password === password,
@@ -136,9 +148,9 @@ async function saveCredential(username: string, password: string) {
   if (matchingCredential) {
     if (!matchingCredential.domains.includes(window.location.hostname)) {
       matchingCredential.domains.push(window.location.hostname)
-      await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
+      await chrome.storage.sync.set({ [savedPasswordsStorageKey]: credentials })
     } else if (migrated) {
-      await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
+      await chrome.storage.sync.set({ [savedPasswordsStorageKey]: credentials })
     }
 
     return
@@ -151,7 +163,7 @@ async function saveCredential(username: string, password: string) {
     timestamp: Date.now(),
   })
 
-  await chrome.storage.local.set({ [savedPasswordsStorageKey]: credentials })
+  await chrome.storage.sync.set({ [savedPasswordsStorageKey]: credentials })
 }
 
 function queueCredentialSave(username: string, password: string) {
@@ -391,10 +403,7 @@ async function renderLoginPanel() {
     return
   }
 
-  const storedData = await chrome.storage.local.get(savedPasswordsStorageKey)
-  const { credentials } = migrateSavedCredentials(
-    storedData[savedPasswordsStorageKey],
-  )
+  const { credentials } = await getStoredCredentials()
   status.textContent = panelStatus
   list.replaceChildren()
 
@@ -478,7 +487,7 @@ function updateLoginPanel() {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (
-    areaName === 'local' &&
+    areaName === 'sync' &&
     changes[savedPasswordsStorageKey] &&
     document.getElementById(loginPanelId)
   ) {
